@@ -5,7 +5,7 @@ CRUD identités + enrôlement facial
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../../ai-core"))
 
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Query
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
 from loguru import logger
 
 from models.schemas import (
@@ -18,17 +18,28 @@ from database.supabase_client import (
     create_identity, get_identity, list_identities,
     resolve_unknown_face, get_supabase,
 )
+from auth.dependencies import require_user, require_admin, AuthenticatedUser
+from services.search_service import remove_identity_from_index
 
-router = APIRouter(prefix="/api/v1/identities", tags=["Identités"])
+router = APIRouter(
+    prefix="/api/v1/identities",
+    tags=["Identités"],
+    dependencies=[Depends(require_user)],
+)
 
 
 # ============================================================
 # CRUD IDENTITÉS
 # ============================================================
 
-@router.post("", response_model=IdentityResponse, status_code=201)
+@router.post(
+    "",
+    response_model=IdentityResponse,
+    status_code=201,
+    dependencies=[Depends(require_admin)],
+)
 async def create_new_identity(data: IdentityCreate):
-    """Crée une nouvelle identité dans le système."""
+    """Crée une nouvelle identité dans le système (admin uniquement)."""
     try:
         record = await create_identity(data.model_dump(exclude_none=True))
         return IdentityResponse(**record)
@@ -70,14 +81,21 @@ async def update_identity(identity_id: str, data: IdentityUpdate):
     return IdentityResponse(**res.data[0])
 
 
-@router.delete("/{identity_id}", response_model=SuccessResponse)
+@router.delete(
+    "/{identity_id}",
+    response_model=SuccessResponse,
+    dependencies=[Depends(require_admin)],
+)
 async def delete_identity(identity_id: str):
-    """Supprime une identité et tous ses embeddings (CASCADE)."""
+    """Supprime une identité et tous ses embeddings (CASCADE). Évince aussi FAISS + Redis."""
     sb = get_supabase()
     res = sb.table("identities").delete().eq("id", identity_id).execute()
     if not res.data:
         raise HTTPException(404, "Identité non trouvée")
-    return SuccessResponse(message=f"Identité {identity_id} supprimée")
+    removed = await remove_identity_from_index(identity_id)
+    return SuccessResponse(
+        message=f"Identité {identity_id} supprimée ({removed} vecteurs évincés de FAISS)"
+    )
 
 
 # ============================================================
@@ -145,7 +163,11 @@ async def list_embeddings(identity_id: str):
 # INCONNUS
 # ============================================================
 
-unknowns_router = APIRouter(prefix="/api/v1/unknowns", tags=["Inconnus"])
+unknowns_router = APIRouter(
+    prefix="/api/v1/unknowns",
+    tags=["Inconnus"],
+    dependencies=[Depends(require_user)],
+)
 
 
 @unknowns_router.get("")
@@ -166,7 +188,11 @@ async def list_unknown_faces(
     return res.data
 
 
-@unknowns_router.post("/{unknown_id}/resolve", response_model=SuccessResponse)
+@unknowns_router.post(
+    "/{unknown_id}/resolve",
+    response_model=SuccessResponse,
+    dependencies=[Depends(require_admin)],
+)
 async def resolve_unknown(unknown_id: str, req: ResolveUnknownRequest):
     """
     Résout un visage inconnu :
@@ -185,14 +211,18 @@ async def resolve_unknown(unknown_id: str, req: ResolveUnknownRequest):
 
     await resolve_unknown_face(unknown_id, identity_id)
 
-    # Transférer l'embedding vers face_embeddings
+    # Transférer l'embedding vers face_embeddings + index FAISS
     sb = get_supabase()
     unknown = sb.table("unknown_faces").select("embedding").eq("id", unknown_id).single().execute()
     if unknown.data:
         import numpy as np
         from database.supabase_client import save_embedding
+        from services.search_service import add_embedding_to_index
         emb = np.array(unknown.data["embedding"], dtype=np.float32)
-        await save_embedding(identity_id, emb, quality=0.7, source="unknown_resolved")
+        saved = await save_embedding(
+            identity_id, emb, quality=0.7, source="unknown_resolved"
+        )
+        await add_embedding_to_index(saved["id"], identity_id, emb)
 
     return SuccessResponse(
         message=f"Inconnu {unknown_id} associé à l'identité {identity_id}"

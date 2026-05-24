@@ -1,8 +1,10 @@
 """
 Configuration centralisée — chargée depuis .env
 """
-from pydantic_settings import BaseSettings
 from functools import lru_cache
+
+from pydantic import field_validator
+from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
@@ -26,9 +28,24 @@ class Settings(BaseSettings):
     similarity_threshold: float = 0.6
     liveness_threshold: float = 0.5
 
+    # KYC (Phase 3)
+    kyc_face_match_threshold: float = 0.70   # plus strict que reco simple
+    ocr_languages: str = "fra+eng"           # syntaxe Tesseract
+
+    # Chiffrement embeddings (Phase 5)
+    embedding_encryption_enabled: bool = False
+    embedding_encryption_key: str = ""        # hex 64 chars ou base64
+
+    # Métriques (Phase 5)
+    metrics_enabled: bool = True
+
     # Redis
     redis_url: str = "redis://localhost:6379/0"
     cache_ttl: int = 300
+    recognition_cache_ttl: int = 30
+
+    # FAISS
+    faiss_resync_interval_s: int = 600       # re-sync index depuis Supabase
 
     # Storage
     storage_bucket: str = "biometric-media"
@@ -40,10 +57,32 @@ class Settings(BaseSettings):
     max_faces_per_frame: int = 10
     fps_target: int = 30
 
-    # Sécurité
-    jwt_expire_minutes: int = 60
+    # Sécurité / Auth
+    jwt_expire_minutes: int = 15
+    refresh_token_expire_minutes: int = 60 * 24 * 30   # 30 jours
     api_key_header: str = "X-API-Key"
-    rate_limit_per_minute: int = 100
+    rate_limit_per_minute: int = 120
+
+    # CORS — liste séparée par virgules ou * en dev
+    cors_origins: str = "*"
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        if self.debug or self.cors_origins.strip() == "*":
+            return ["*"]
+        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
+    @field_validator("secret_key")
+    @classmethod
+    def _validate_secret(cls, v: str) -> str:
+        if v == "change_me" or len(v) < 32:
+            # Avertissement seulement en dev — bloquera l'usage en prod via app_env
+            import warnings
+            warnings.warn(
+                "SECRET_KEY trop faible (< 32 chars) — non utilisable en production",
+                stacklevel=2,
+            )
+        return v
 
     class Config:
         env_file = ".env"

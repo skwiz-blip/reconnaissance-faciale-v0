@@ -14,6 +14,8 @@ import numpy as np
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from loguru import logger
 
+from auth.dependencies import authenticate_websocket
+
 router = APIRouter(tags=["WebSocket temps réel"])
 
 
@@ -53,13 +55,22 @@ async def camera_stream(websocket: WebSocket, camera_id: str):
     """
     WebSocket pour flux caméra temps réel.
 
+    Authentification: passer le JWT en query param `?token=...`
+    ou header `Authorization: Bearer <token>`.
+
     Protocol:
       Client → Server: {"type": "frame", "data": "<base64_image>", "liveness": true}
       Server → Client: {"type": "result", "event_type": "...", "matches": [...], ...}
       Server → Client: {"type": "error", "message": "..."}
       Server → Client: {"type": "ping"}
     """
+    user = await authenticate_websocket(websocket)
+    if user is None:
+        return  # close() déjà appelé par authenticate_websocket
+
     await manager.connect(websocket, camera_id)
+    logger.info(f"WS caméra {camera_id} authentifiée user={user.user_id} role={user.role}")
+
     from pipeline import get_pipeline
     pipeline = get_pipeline()
 
@@ -189,13 +200,20 @@ async def _log_ws_event(result, event_type: str, camera_id: str):
 async def dashboard_feed(websocket: WebSocket):
     """
     WebSocket dashboard — reçoit les alertes temps réel.
-    Utilisé par le dashboard React pour afficher les événements live.
+    Réservé aux admins (JWT requis).
     """
-    await manager.connect(websocket, "dashboard")
+    user = await authenticate_websocket(websocket)
+    if user is None:
+        return
+    if user.role not in ("admin", "operator"):
+        await websocket.close(code=1008, reason="Rôle insuffisant")
+        return
+
+    client_id = f"dashboard:{user.user_id}"
+    await manager.connect(websocket, client_id)
     try:
         while True:
-            # Garder la connexion ouverte — le dashboard est passif
             await asyncio.sleep(30)
             await websocket.send_json({"type": "heartbeat"})
     except WebSocketDisconnect:
-        manager.disconnect("dashboard")
+        manager.disconnect(client_id)

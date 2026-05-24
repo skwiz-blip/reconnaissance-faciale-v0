@@ -6,17 +6,27 @@ POST /api/v1/recognize/upload — multipart
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../../ai-core"))
 
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from loguru import logger
 
 from models.schemas import (
     RecognizeRequest, RecognizeResponse, MatchInfo
 )
 from database.supabase_client import log_recognition_event, upload_image
+from database import redis_cache
+from auth.dependencies import require_user, rate_limit, AuthenticatedUser
 from config import get_settings
 
-router = APIRouter(prefix="/api/v1/recognize", tags=["Reconnaissance"])
 settings = get_settings()
+
+router = APIRouter(
+    prefix="/api/v1/recognize",
+    tags=["Reconnaissance"],
+    dependencies=[
+        Depends(require_user),
+        Depends(rate_limit(settings.rate_limit_per_minute)),
+    ],
+)
 
 
 @router.post("", response_model=RecognizeResponse)

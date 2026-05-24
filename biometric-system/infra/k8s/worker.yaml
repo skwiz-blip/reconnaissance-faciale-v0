@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: biometric-worker
+  namespace: biometric
+  labels: { app: biometric-worker }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: biometric-worker } }
+  template:
+    metadata: { labels: { app: biometric-worker } }
+    spec:
+      containers:
+        - name: worker
+          image: ghcr.io/your-org/biometric-api:latest
+          command: ["celery"]
+          args: ["-A", "tasks", "worker", "--loglevel=info", "--concurrency=2"]
+          envFrom:
+            - configMapRef: { name: biometric-config }
+            - secretRef:    { name: biometric-secrets }
+          resources:
+            requests: { cpu: "200m",  memory: "512Mi" }
+            limits:   { cpu: "1500m", memory: "2Gi" }
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: biometric-beat
+  namespace: biometric
+  labels: { app: biometric-beat }
+spec:
+  replicas: 1   # NE PAS scaler — un seul scheduler
+  selector: { matchLabels: { app: biometric-beat } }
+  template:
+    metadata: { labels: { app: biometric-beat } }
+    spec:
+      containers:
+        - name: beat
+          image: ghcr.io/your-org/biometric-api:latest
+          command: ["celery"]
+          args: ["-A", "tasks", "beat", "--loglevel=info"]
+          envFrom:
+            - configMapRef: { name: biometric-config }
+            - secretRef:    { name: biometric-secrets }
+          resources:
+            requests: { cpu: "50m",  memory: "128Mi" }
+            limits:   { cpu: "200m", memory: "256Mi" }

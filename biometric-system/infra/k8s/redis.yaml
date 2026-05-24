@@ -1,0 +1,65 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: biometric-redis-pvc
+  namespace: biometric
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 2Gi
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: biometric-redis
+  namespace: biometric
+spec:
+  serviceName: biometric-redis
+  replicas: 1
+  selector: { matchLabels: { app: biometric-redis } }
+  template:
+    metadata: { labels: { app: biometric-redis } }
+    spec:
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        args:
+          - "--maxmemory"
+          - "1gb"
+          - "--maxmemory-policy"
+          - "allkeys-lru"
+          - "--appendonly"
+          - "yes"
+        ports:
+          - { containerPort: 6379, name: redis }
+        resources:
+          requests: { cpu: "100m", memory: "256Mi" }
+          limits:   { cpu: "1000m", memory: "1.2Gi" }
+        livenessProbe:
+          tcpSocket: { port: 6379 }
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        readinessProbe:
+          exec:
+            command: ["redis-cli", "ping"]
+          initialDelaySeconds: 2
+          periodSeconds: 5
+        volumeMounts:
+          - { name: data, mountPath: /data }
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: biometric-redis-pvc }
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: biometric-redis
+  namespace: biometric
+spec:
+  selector: { app: biometric-redis }
+  ports:
+    - { name: redis, port: 6379, targetPort: 6379 }
+  clusterIP: None

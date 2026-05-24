@@ -148,8 +148,15 @@ class BiometricPipeline:
         result.embedding = embedding
         result.quality_score = primary.quality_score
 
-        # ---- 4. Matching Supabase ----
+        # ---- 4. Matching (FAISS → fallback Supabase) ----
+        import time as _t
+        ts = _t.perf_counter()
         matches = await self._search_identity(embedding)
+        try:
+            from observability.metrics import faiss_search_seconds
+            faiss_search_seconds.observe(_t.perf_counter() - ts)
+        except Exception:
+            pass
         result.matches = matches
 
         # ---- 5. Gestion inconnus ----
@@ -165,6 +172,16 @@ class BiometricPipeline:
                 f"[{camera_id}] Reconnu: {top.full_name} "
                 f"(sim={top.similarity:.3f})"
             )
+
+        # Métriques Prometheus
+        try:
+            from observability.metrics import recognition_total
+            event = ("recognized" if matches
+                     else "spoof_detected" if not result.is_live
+                     else "unknown")
+            recognition_total.labels(event_type=event).inc()
+        except Exception:
+            pass
 
         result.processing_ms = round((time.perf_counter() - t0) * 1000, 1)
         return result
@@ -210,14 +227,19 @@ class BiometricPipeline:
                 "error": f"Qualité trop faible ({result.quality_score:.2f})"
             }
 
-        # Sauvegarder dans Supabase
+        # Sauvegarder dans Supabase puis pousser dans FAISS (write-through)
         from database.supabase_client import save_embedding
+        from services.search_service import add_embedding_to_index
+
         emb_record = await save_embedding(
             identity_id=identity_id,
             embedding=result.embedding,
             quality=result.quality_score,
             source="enrollment",
             is_primary=(result.quality_score > 0.8),
+        )
+        await add_embedding_to_index(
+            emb_record["id"], identity_id, result.embedding
         )
 
         return {
@@ -228,19 +250,24 @@ class BiometricPipeline:
         }
 
     async def _search_identity(self, embedding: np.ndarray) -> list[MatchResult]:
-        """Recherche dans Supabase via pgvector RPC"""
-        from database.supabase_client import search_face_embedding
-        rows = await search_face_embedding(embedding, self.similarity_threshold)
+        """
+        Recherche unifiée: FAISS (chemin chaud) → fallback Supabase pgvector.
+        Voir services/search_service.py pour le détail de la hiérarchie.
+        """
+        from services.search_service import search_identities
+        hits = await search_identities(
+            embedding, threshold=self.similarity_threshold, limit=5
+        )
         return [
             MatchResult(
-                identity_id=r["identity_id"],
-                full_name=r["full_name"],
-                role=r["role"],
-                status=r["status"],
-                similarity=float(r["similarity"]),
+                identity_id=h.identity_id,
+                full_name=h.full_name,
+                role=h.role,
+                status=h.status,
+                similarity=h.similarity,
                 is_match=True,
             )
-            for r in rows
+            for h in hits
         ]
 
     async def _handle_unknown(self,

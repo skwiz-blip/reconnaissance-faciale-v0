@@ -59,14 +59,31 @@ async def save_embedding(identity_id: str, embedding: np.ndarray,
                           quality: float = 0.9,
                           source: str = "webcam",
                           is_primary: bool = False) -> dict:
+    """
+    Sauvegarde un embedding. Si EMBEDDING_ENCRYPTION_ENABLED=true,
+    chiffre AES-GCM et stocke dans `embedding_encrypted`. Sinon, fallback
+    sur la colonne vector classique.
+    """
     sb = get_supabase()
-    res = sb.table("face_embeddings").insert({
-        "identity_id": identity_id,
-        "embedding":   embedding.tolist(),
-        "quality_score": quality,
+    from security import encrypt_embedding, is_encryption_enabled
+
+    payload = {
+        "identity_id":    identity_id,
+        "quality_score":  quality,
         "capture_source": source,
-        "is_primary": is_primary,
-    }).execute()
+        "is_primary":     is_primary,
+    }
+    if is_encryption_enabled():
+        payload["embedding_encrypted"] = encrypt_embedding(embedding)
+        payload["encryption_version"]  = 1
+        # On garde la colonne `embedding` vide pour ne pas dupliquer en clair
+        # (la colonne reste nullable côté SQL puisqu'on ne l'utilise plus).
+        # Si la colonne est NOT NULL dans ton schéma actuel, stocke un zero-vector:
+        payload["embedding"] = np.zeros(512, dtype=np.float32).tolist()
+    else:
+        payload["embedding"] = embedding.tolist()
+
+    res = sb.table("face_embeddings").insert(payload).execute()
     return res.data[0]
 
 

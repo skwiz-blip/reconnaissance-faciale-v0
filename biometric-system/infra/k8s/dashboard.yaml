@@ -1,0 +1,35 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: biometric-dashboard
+  namespace: biometric
+  labels: { app: biometric-dashboard }
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: biometric-dashboard } }
+  template:
+    metadata: { labels: { app: biometric-dashboard } }
+    spec:
+      containers:
+        - name: dashboard
+          image: ghcr.io/your-org/biometric-dashboard:latest
+          ports: [{ containerPort: 80 }]
+          resources:
+            requests: { cpu: "50m",  memory: "64Mi" }
+            limits:   { cpu: "500m", memory: "256Mi" }
+          readinessProbe:
+            httpGet: { path: /, port: 80 }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /, port: 80 }
+            periodSeconds: 30
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: biometric-dashboard
+  namespace: biometric
+spec:
+  selector: { app: biometric-dashboard }
+  ports: [{ port: 80, targetPort: 80 }]

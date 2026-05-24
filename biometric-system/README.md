@@ -1,7 +1,7 @@
 # Biometric Recognition System
 
 Système IA de reconnaissance faciale biométrique professionnel.
-**Phase 5** — GPU/batch inference, AES-GCM embeddings, RGPD (oubli/export/consentement/rétention), Prometheus, Kubernetes, load tests Locust, CI/CD GitHub Actions
+**Phase 6** — Multi-tenant SaaS, voix (Resemblyzer 256D), fusion multimodale visage+voix, émotions FER+, stress, active learning, drift detection, webhooks signés HMAC, SDK Python
 
 ---
 
@@ -26,8 +26,9 @@ supabase/migrations/001_initial_schema.sql
 supabase/migrations/002_phase2_auth_clusters.sql
 supabase/migrations/003_phase3_kyc_access.sql
 supabase/migrations/004_phase5_rgpd_encryption.sql
+supabase/migrations/005_phase6_saas_ai.sql
 ```
-Crée toutes les tables + index pgvector + RPC + tables auth/audit + zones/politiques + challenges + consents/erasure/retention + colonnes chiffrement.
+Crée toutes les tables + index pgvector + RPC + auth/audit + zones/politiques + challenges + consents/erasure/retention + chiffrement + multi-tenant/voice/affect/webhooks/learning.
 
 ### 3.bis Tesseract (OCR KYC)
 La Phase 3 utilise Tesseract pour l'OCR documents.
@@ -374,6 +375,50 @@ curl -X POST .../api/v1/compliance/retention/run \
      -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
+## 🏢 SaaS multi-tenant (Phase 6)
+
+```bash
+# 1. Créer un tenant
+curl -X POST .../api/v1/tenants \
+     -H "Authorization: Bearer $ADMIN_TOKEN" \
+     -d '{"code":"acme-corp","name":"Acme Corp","plan":"pro"}'
+
+# 2. Créer une API key (à donner au partenaire — affichée UNE SEULE FOIS)
+curl -X POST .../api/v1/tenants/<tenant_id>/api-keys \
+     -H "Authorization: Bearer $ADMIN_TOKEN" \
+     -d '{"name":"prod-key-1","scopes":["recognize","access"]}'
+# → "api_key": "bio_xxxxxxxxxxxxx..."
+
+# 3. Le partenaire utilise sa clé:
+curl -X POST .../api/v1/recognize -H "X-API-Key: bio_xxx" -d '{...}'
+```
+
+### SDK Python (côté partenaire)
+
+```python
+from biometric_sdk import BiometricClient
+
+client = BiometricClient(api_url="https://api.example.com", api_key="bio_xxx")
+resp = client.recognize_from_file("photo.jpg", check_liveness=True)
+for m in resp.matches:
+    print(m.full_name, m.similarity)
+```
+
+### Webhooks
+
+```bash
+# Le partenaire s'abonne aux événements depuis son compte tenant
+curl -X POST .../api/v1/webhooks \
+     -H "X-API-Key: bio_xxx" \
+     -d '{
+       "url":"https://partner.example.com/hook",
+       "events":["recognition.matched","access.denied","kyc.approved"]
+     }'
+# → réponse contient "secret": "whsec_xxx" (à stocker côté partenaire)
+```
+
+Côté partenaire, vérifier la signature avec `biometric_sdk.verify_webhook_signature(secret, body, header_signature)`.
+
 ---
 
 ## 🗄️ Tables Supabase
@@ -416,6 +461,50 @@ Vue: `access_summary` (jointure access_logs × identities × events).
 - [x] Clustering DBSCAN inconnus (manuel via API + Celery périodique)
 - [x] WebSocket sécurisé (JWT via `?token=` ou header)
 - [x] Health check étendu (FAISS + Redis)
+
+## ✅ Phase 6 livrée
+
+### Multi-tenant SaaS — [services/api-gateway/tenancy/](services/api-gateway/tenancy/)
+- `TenantMiddleware` qui pose un `TenantContext` (ContextVar coroutine-safe) à chaque requête
+- Résolution via `X-API-Key` (tenant key SHA-256 hashed) ou `X-Tenant-Id` (slug/uuid + JWT)
+- Cache Redis 60s sur tenants + API keys
+- Quotas + plans (free/pro/enterprise) + table `tenant_usage_daily` + RPC `increment_tenant_usage`
+- CRUD complet via `/api/v1/tenants` (admin only) + génération API keys
+
+### Reconnaissance vocale — [services/ai-core/voice/](services/ai-core/voice/)
+- [embedder.py](services/ai-core/voice/embedder.py) — Resemblyzer GE2E 256-D, mock fallback si paquet absent
+- [fusion.py](services/ai-core/voice/fusion.py) — 4 stratégies (weighted_sum / min / max / product), require_both, défaut 0.6 visage + 0.4 voix
+- Router [/api/v1/voice](services/api-gateway/routers/voice.py) : enroll / verify (1:1) / identify (1:N pgvector HNSW 256D) / fuse
+- Table `voice_embeddings` + RPC `search_voice` scopé tenant
+
+### Affect (émotions + stress) — [services/ai-core/affect/](services/ai-core/affect/)
+- [emotion.py](services/ai-core/affect/emotion.py) — FER+ ONNX (8 émotions Ekman), fallback heuristique landmarks
+- [stress.py](services/ai-core/affect/stress.py) — fenêtre 30s : blink rate + variance pose + émotions négatives + asymétrie
+- Router [/api/v1/affect](services/api-gateway/routers/affect.py) : emotion (image) / stress (séquence) / timeline (séries temporelles)
+- Table `affect_signals` reliée aux events
+
+### Active learning + drift — [services/api-gateway/learning/](services/api-gateway/learning/)
+- [active_learning.py](services/api-gateway/learning/active_learning.py) — capture auto des matches "borderline" (0.55-0.72), file de validation admin, 3 corrections (confirm/reassign/reject)
+- [drift.py](services/api-gateway/learning/drift.py) — calcule cohésion baseline + similarité récents → centroïde, scheduling re-enrôlement auto (poids 0.6 pour ne pas écraser la baseline)
+- Router [/api/v1/learning](services/api-gateway/routers/learning.py) : corrections (list/apply) + drift/{identity_id}
+- Hook automatique dans le pipeline (tout match < 0.72 alimente la queue)
+
+### Webhooks — [services/api-gateway/webhooks/](services/api-gateway/webhooks/)
+- Style Stripe : `X-Bio-Signature: t=<ts>,v1=<hmac_sha256(ts.body)>` + tolérance 5 min replay
+- 3 retries avec backoff exponentiel (1s, 4s, 16s), persistance `webhook_deliveries`
+- **12 event types** (`recognition.matched`, `access.denied`, `kyc.approved`, etc.)
+- Dispatch auto depuis le pipeline (fire-and-forget)
+- Router [/api/v1/webhooks](services/api-gateway/routers/webhooks.py) : CRUD + deliveries + test endpoint (tenant-aware)
+
+### Python SDK — [sdks/python/](sdks/python/)
+- Client sync + async (httpx)
+- 3 exceptions typées (`AuthenticationError`, `RateLimitError`, `ApiError`)
+- Helpers `recognize_from_file`, `check_access`, `start_kyc/submit_kyc`, `create_identity`, `enroll_face`
+- `verify_webhook_signature()` exposé pour les partenaires côté serveur
+- Packageable `pip install -e sdks/python`
+
+### SQL Migration 005 — [005_phase6_saas_ai.sql](supabase/migrations/005_phase6_saas_ai.sql)
+9 nouvelles tables : `tenants`, `tenant_api_keys`, `voice_embeddings`, `affect_signals`, `webhooks`, `webhook_deliveries`, `correction_candidates`, `drift_reports`, `tenant_usage_daily`. Ajout `tenant_id` sur 8 tables existantes. 3 RPC. Vue `tenant_overview`.
 
 ## ✅ Phase 5 livrée
 
@@ -498,13 +587,13 @@ Vue: `access_summary` (jointure access_logs × identities × events).
 - [x] **Tables Phase 3** : `zones`, `access_policies`, `liveness_challenges`, `access_points` + extension `kyc_sessions` + vue `access_summary`
 - [x] **9 nouveaux endpoints** KYC / liveness / access / audit + seed de 4 zones de démo
 
-## 📌 Prochaine étape — Phase 6
+## 🎯 Roadmap suivante (Phase 7+)
 
-- [ ] Vocal fusion (reconnaissance vocale + visage = identité multimodale)
-- [ ] Analyse émotionnelle (FER+ ONNX)
-- [ ] Détection de stress (micro-expressions + variation HR via rPPG)
-- [ ] Identification comportementale (démarche, posture)
-- [ ] Multi-tenant SaaS (cloisonnement strict par organisation)
-- [ ] Fine-tuning continu (active learning sur les corrections admin)
-- [ ] SDK partenaires (Python, JS, Java) + webhooks
-- [ ] Mise à jour incrémentale des embeddings (re-enroll auto si dérive)
+- [ ] SDK JavaScript / TypeScript (web + Node)
+- [ ] SDK Java/Kotlin (Android natif)
+- [ ] rPPG (variabilité cardiaque depuis vidéo) pour stress avancé
+- [ ] Identification comportementale (démarche, posture via OpenPose)
+- [ ] Fine-tuning continu effectif (LoRA sur ArcFace avec batch hebdomadaire)
+- [ ] Edge inference (ONNX → Triton / NVIDIA Jetson)
+- [ ] Marketplace tenants + portail self-service signup
+- [ ] SSO entreprise (SAML 2.0, OIDC)

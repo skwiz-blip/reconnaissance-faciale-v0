@@ -174,12 +174,60 @@ class BiometricPipeline:
             )
 
         # Métriques Prometheus
+        event = ("recognized" if matches
+                 else "spoof_detected" if not result.is_live
+                 else "unknown")
         try:
             from observability.metrics import recognition_total
-            event = ("recognized" if matches
-                     else "spoof_detected" if not result.is_live
-                     else "unknown")
             recognition_total.labels(event_type=event).inc()
+        except Exception:
+            pass
+
+        # Webhooks tenant (Phase 6) — dispatch async, non bloquant
+        try:
+            from tenancy.context import current_tenant
+            from webhooks import dispatch_event
+            import asyncio as _asyncio
+            tenant = current_tenant()
+            event_type = (
+                "recognition.matched"        if matches else
+                "recognition.spoof_detected" if not result.is_live else
+                "recognition.unknown"
+            )
+            payload = {
+                "camera_id": camera_id,
+                "face_count": result.face_count,
+                "is_live": result.is_live,
+                "liveness_score": result.liveness_score,
+                "matches": [
+                    {"identity_id": m.identity_id, "full_name": m.full_name,
+                     "similarity": round(m.similarity, 4)}
+                    for m in matches
+                ],
+                "unknown_ids": result.unknown_ids,
+            }
+            _asyncio.create_task(dispatch_event(
+                event_type, payload,
+                tenant_id=tenant.tenant_id if tenant else None,
+            ))
+        except Exception:
+            pass
+
+        # Active learning — détecte les matches borderline
+        try:
+            from learning import queue_correction_candidate
+            if matches and matches[0].similarity < 0.72:
+                import asyncio as _asyncio
+                _asyncio.create_task(queue_correction_candidate(
+                    event_id="",  # rempli par le router si besoin
+                    predicted_identity_id=matches[0].identity_id,
+                    top_similarity=matches[0].similarity,
+                    embedding=result.embedding,
+                    candidates=[
+                        {"identity_id": m.identity_id, "similarity": round(m.similarity, 4)}
+                        for m in matches[:5]
+                    ],
+                ))
         except Exception:
             pass
 

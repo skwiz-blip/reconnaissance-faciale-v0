@@ -25,6 +25,11 @@ from routers.liveness import router as liveness_router
 from routers.access import router as access_router
 from routers.audit import router as audit_router
 from routers.compliance import router as compliance_router
+from routers.tenants import router as tenants_router
+from routers.voice import router as voice_router
+from routers.affect import router as affect_router
+from routers.webhooks import router as webhooks_router
+from routers.learning import router as learning_router
 
 settings = get_settings()
 
@@ -104,6 +109,10 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 from middleware.audit import AuditMiddleware
 app.add_middleware(AuditMiddleware)
 
+# Multi-tenant (Phase 6) — pose le tenant context au début de chaque requête
+from tenancy import TenantMiddleware
+app.add_middleware(TenantMiddleware)
+
 if settings.metrics_enabled:
     from observability.metrics import PrometheusMiddleware
     app.add_middleware(PrometheusMiddleware)
@@ -131,6 +140,11 @@ app.include_router(liveness_router)
 app.include_router(access_router)
 app.include_router(audit_router)
 app.include_router(compliance_router)
+app.include_router(tenants_router)
+app.include_router(voice_router)
+app.include_router(affect_router)
+app.include_router(webhooks_router)
+app.include_router(learning_router)
 app.include_router(ws_router)
 
 if settings.metrics_enabled:

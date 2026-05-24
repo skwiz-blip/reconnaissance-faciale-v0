@@ -60,6 +60,13 @@ easyocr==1.7.1
 prometheus-client==0.20.0
 pynvml==11.5.0                    # détection GPU NVIDIA (optionnel)
 
+# --- Phase 6 : Voice + Affect + Webhooks ---
+resemblyzer==0.1.4                # voice embeddings 256-D
+soundfile==0.12.1                 # audio I/O
+librosa==0.10.2                   # audio preproc (dep transitive)
+# httpx déjà présent → utilisé par webhooks dispatcher
+# onnxruntime déjà présent → utilisé par FER+ emotion model
+
 # --- Dev / Tests ---
 pytest==8.2.0
 pytest-asyncio==0.23.6

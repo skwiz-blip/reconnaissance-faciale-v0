@@ -3,12 +3,14 @@
 # ============================================================
 FROM python:3.11-slim
 
-# Dépendances système pour OpenCV + InsightFace
-RUN apt-get update && apt-get install -y \
-    libglib2.0-0 libsm6 libxext6 libxrender-dev \
-    libgomp1 libgl1-mesa-glx \
+# Dépendances système pour OpenCV + InsightFace + Tesseract
+# (libgl1 remplace libgl1-mesa-glx sur Debian Trixie+)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libglib2.0-0 libsm6 libxext6 libxrender1 \
+    libgomp1 libgl1 \
     curl build-essential \
     tesseract-ocr tesseract-ocr-fra \
+    ffmpeg libsndfile1 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

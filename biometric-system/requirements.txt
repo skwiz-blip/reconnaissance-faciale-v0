@@ -1,6 +1,5 @@
 # ============================================================
 # BIOMETRIC SYSTEM — Dépendances Python
-# pip install -r requirements.txt
 # ============================================================
 
 # --- FastAPI & serveur ---
@@ -11,27 +10,24 @@ websockets==12.0
 
 # --- Supabase ---
 supabase==2.4.6
-postgrest-py==0.16.7
 
 # --- IA / Vision ---
 opencv-python-headless==4.9.0.80
 insightface==0.7.3
-onnxruntime==1.18.0               # CPU
-# onnxruntime-gpu==1.18.0         # GPU — décommenter si CUDA dispo
+onnxruntime==1.18.0
 numpy==1.26.4
 Pillow==10.3.0
 mediapipe==0.10.14
 scikit-learn==1.4.2
 
 # --- Recherche vectorielle ---
-faiss-cpu==1.8.0                  # ou faiss-gpu
-# qdrant-client==1.9.1            # décommenter pour Qdrant
+faiss-cpu==1.8.0
 
 # --- Sécurité & Auth ---
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
-bcrypt==4.1.3                     # passlib backend
-cryptography==43.0.1              # AES-GCM embeddings (Phase 5)
+bcrypt==4.1.3
+cryptography==43.0.1
 pydantic[email]==2.7.1
 pydantic-settings==2.2.1
 email-validator==2.1.1
@@ -45,32 +41,24 @@ python-dotenv==1.0.1
 loguru==0.7.2
 aiofiles==23.2.1
 httpx==0.27.0
-Pillow==10.3.0
 python-magic==0.4.27
 
-# --- OCR (KYC, Phase 3) ---
-# Tesseract binaire requis sur l'OS:
-#   apt: apt-get install -y tesseract-ocr tesseract-ocr-fra
-#   brew: brew install tesseract tesseract-lang
-#   windows: https://github.com/UB-Mannheim/tesseract/wiki
+# --- OCR ---
 pytesseract==0.3.10
 easyocr==1.7.1
 
-# --- Observabilité (Phase 5) ---
+# --- Observabilité ---
 prometheus-client==0.20.0
-pynvml==11.5.0                    # détection GPU NVIDIA (optionnel)
+pynvml==11.5.0
 
-# --- Phase 6 : Voice + Affect + Webhooks ---
-resemblyzer==0.1.4                # voice embeddings 256-D
-soundfile==0.12.1                 # audio I/O
-librosa==0.10.2                   # audio preproc (dep transitive)
-# httpx déjà présent → utilisé par webhooks dispatcher
-# onnxruntime déjà présent → utilisé par FER+ emotion model
+# --- Voice ---
+resemblyzer==0.1.4
+soundfile==0.12.1
+librosa==0.10.2
 
 # --- Dev / Tests ---
 pytest==8.2.0
 pytest-asyncio==0.23.6
-httpx==0.27.0
 black==24.4.2
 isort==5.13.2
-locust==2.31.5                    # load testing (Phase 5)
+locust==2.31.5

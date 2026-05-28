@@ -1,5 +1,3 @@
-version: "3.9"
-
 # ============================================================
 # BIOMETRIC SYSTEM — Docker Compose (développement)
 # Usage: docker compose up --build
@@ -19,9 +17,15 @@ services:
     volumes:
       - ./services/api-gateway:/app
       - ./services/ai-core:/app/ai_core
-      - ./models:/app/models
+      # ML models (ONNX) — montés dans un dossier dédié pour éviter
+      # le conflit avec le package Python /app/models (Pydantic schemas)
+      - ./ml_models:/app/ml_models
     environment:
       - PYTHONPATH=/app:/app/ai_core
+      # Surcharge REDIS_URL — dans le compose, le service s'appelle "redis"
+      - REDIS_URL=redis://redis:6379/0
+      # Surcharge MODEL_DIR pour utiliser le nouveau mount
+      - MODEL_DIR=/app/ml_models
     env_file: .env
     depends_on:
       redis:
@@ -63,10 +67,15 @@ services:
     volumes:
       - ./services/api-gateway:/app
       - ./services/ai-core:/app/ai_core
-      - ./models:/app/models
+      - ./ml_models:/app/ml_models
+    environment:
+      - PYTHONPATH=/app:/app/ai_core
+      - REDIS_URL=redis://redis:6379/0
+      - MODEL_DIR=/app/ml_models
     env_file: .env
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
     networks:
       - biometric-net
 

@@ -1,0 +1,87 @@
+# ============================================================
+# fly.toml — Configuration Fly.io pour le backend FastAPI
+# Doc: https://fly.io/docs/reference/configuration/
+# ============================================================
+# Régénère le nom si besoin: flyctl apps create biometric-api-<unique>
+app = "biometric-api"
+primary_region = "cdg"   # Paris — change si tu préfères iad/lhr/fra
+
+[build]
+  dockerfile = "infra/docker/Dockerfile.api"
+
+[env]
+  APP_ENV  = "production"
+  APP_HOST = "0.0.0.0"
+  APP_PORT = "8000"
+  DEBUG    = "false"
+
+  # IA
+  GPU_ENABLED          = "false"             # pas de GPU sur Fly free tier
+  FACE_DETECTION_MODEL = "buffalo_l"
+  EMBEDDING_MODEL      = "arcface_r100"
+  MODEL_DIR            = "/data/models"      # persistant via volume
+  SIMILARITY_THRESHOLD = "0.6"
+  LIVENESS_THRESHOLD   = "0.5"
+
+  # Perf
+  BATCH_SIZE           = "4"
+  MAX_FACES_PER_FRAME  = "5"
+
+  # FAISS
+  FAISS_RESYNC_INTERVAL_S = "600"
+
+  # JWT
+  JWT_EXPIRE_MINUTES           = "15"
+  REFRESH_TOKEN_EXPIRE_MINUTES = "43200"
+  RATE_LIMIT_PER_MINUTE        = "120"
+
+  # Observabilité
+  METRICS_ENABLED = "true"
+
+  # Multi-tenant (Phase 6)
+  MULTI_TENANT_ENABLED = "true"
+
+[http_service]
+  internal_port = 8000
+  force_https   = true
+  auto_stop_machines  = "stop"        # économise quand pas de trafic
+  auto_start_machines = true
+  min_machines_running = 0            # passe à 1 pour éviter cold starts
+  processes = ["app"]
+
+  [http_service.concurrency]
+    type       = "requests"
+    hard_limit = 200
+    soft_limit = 100
+
+[[http_service.checks]]
+  grace_period  = "30s"
+  interval      = "30s"
+  method        = "GET"
+  path          = "/health"
+  timeout       = "10s"
+
+# ============================================================
+# Ressources VM — InsightFace + ONNX ont besoin de RAM
+# 2GB minimum recommandé (1GB → OOM possible au chargement modèle)
+# ============================================================
+[[vm]]
+  size      = "performance-1x"   # 1 vCPU, 2GB RAM (~5$/mois)
+  # alternatives:
+  # size = "shared-cpu-2x"      # gratuit-ish, 512MB (peut OOM)
+  # size = "performance-2x"     # 2 vCPU, 4GB RAM (~10$/mois)
+
+# ============================================================
+# Volume persistant pour les modèles ONNX (~280 MB)
+# Évite de retélécharger à chaque déploiement
+# Créer avec: flyctl volumes create biometric_data --size 2 --region cdg
+# ============================================================
+[[mounts]]
+  source      = "biometric_data"
+  destination = "/data"
+
+# ============================================================
+# Process types
+# ============================================================
+[processes]
+  app = "uvicorn main:app --host 0.0.0.0 --port 8000 --workers 1"

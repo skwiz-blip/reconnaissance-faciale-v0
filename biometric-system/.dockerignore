@@ -1,0 +1,79 @@
+# ============================================================
+# .dockerignore — exclut tout ce qui ne doit PAS aller dans l'image API
+# Crucial pour Fly.io : upload context ~50MB au lieu de 500MB+
+# ============================================================
+
+# Frontend (déployé séparément sur Vercel)
+apps/
+
+# Mobile app
+sdks/
+
+# Tests + load test fixtures
+tests/load/fixtures/
+
+# Docs et fichiers de dev
+README.md
+*.md
+!services/**/*.md
+
+# Git
+.git/
+.gitignore
+.github/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+.coverage
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Données locales
+ml_models/*.onnx
+ml_models/*.zip
+ml_models/buffalo_l/
+data/
+logs/
+*.log
+
+# Secrets — NE JAMAIS pousser
+.env
+.env.*
+!.env.example
+secrets.yaml
+*.pem
+*.key
+
+# Docker
+docker-compose.yml
+docker-compose.*.yml
+Dockerfile.dev
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Infra non backend
+infra/k8s/
+infra/nginx/
+
+# Migrations SQL (s'exécutent sur Supabase, pas dans le container)
+supabase/
+
+# Fly state
+.fly/
